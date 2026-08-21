@@ -40,7 +40,6 @@ def bo7():
 @app.get("/classe")
 def classe():
     q = request.args.get("arma", "").strip()
-    user = request.args.get("user", "").strip()
     if not q:
         return "⚠️ Informe a arma. Exemplo: !classe an94"
     matches = catalog.search(q)
@@ -49,7 +48,7 @@ def classe():
     if len(matches) > 1:
         names = ", ".join(x["name"] for x in matches[:6])
         return f"🤔 Qual arma você deseja? {names}"
-    return format_class_response(engine.resolve(matches[0]), user)
+    return format_class_response(engine.resolve(matches[0]))
 
 @app.get("/meta")
 def meta():
@@ -64,7 +63,7 @@ def meta():
         return "🤔 Qual arma você deseja? " + ", ".join(x["name"] for x in matches[:6])
     if not matches:
         return f"🔎 Não encontrei uma arma chamada {q}."
-    return format_class_response(engine.resolve(matches[0]), request.args.get("user", ""))
+    return format_class_response(engine.resolve(matches[0]))
 
 @app.get("/reload")
 def reload_data():

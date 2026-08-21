@@ -12,7 +12,7 @@ API focada no comando principal `!classe`.
 
 ## Comando
 
-O endpoint principal é `/classe?arma=AN-94&user=@Gabriel`.
+O endpoint principal é `/classe?arma=AN-94`. A marcação de quem usou o comando fica no StreamElements.
 
 No StreamElements, o nome do comando pode ser `!classe`, `!arma`, `!build` ou qualquer outro. O nome do comando fica no próprio StreamElements/SN7 Core; a API não depende do texto `!classe`.
 

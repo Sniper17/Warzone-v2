@@ -58,24 +58,8 @@ def _fit_bytes(parts, limit=MAX_BYTES):
     return result
 
 
-def format_class_response(r, username=""):
-    # O nome é opcional. Quando o StreamElements já marca o usuário
-    # externamente, não duplicamos a menção dentro da API.
-    username = str(username or "").strip()
-    if username and not username.startswith("@"):
-        username = "@" + username
-
-    def display_name(weapon_name):
-        if not username:
-            return weapon_name
-        # Proteção contra a configuração antiga em que $(user) podia
-        # receber o argumento da arma (ex.: "carbon").
-        u = username[1:].lower().replace("_", "")
-        w = str(weapon_name).lower().replace(" ", "").replace("-", "")
-        if u and (u == w or w.startswith(u)):
-            return weapon_name
-        return f"{username} {weapon_name}"
-    """Resposta do !classe: apenas o loadout confirmado + buff/nerf."""
+def format_class_response(r):
+    """Resposta do !classe: somente o nome da arma + loadout confirmado + buff/nerf."""
     w = r["weapon"]
     name = w.get("name", "Arma")
     changes = (r.get("patch") or {}).get("changes") or []
@@ -85,31 +69,27 @@ def format_class_response(r, username=""):
     if not atts:
         if typ == "buff" and changes:
             return _fit_bytes([
-                f"⚡ {display_name(name)}",
+                f"⚡ {name}",
                 "📈 Buff: " + _changes(changes, "+"),
                 "Loadout ainda não confirmado",
             ])
         if typ == "nerf" and changes:
             return _fit_bytes([
-                f"⚡ {display_name(name)}",
+                f"⚡ {name}",
                 "📉 Nerf: " + _changes(changes, "↓"),
                 "Loadout ainda não confirmado",
             ])
-        return f"🔎 {display_name(name)} | Loadout ainda não confirmado."
+        return f"🔎 {name} | Loadout ainda não confirmado."
 
-    # Não exibimos mais META/BOA/RUIM no !classe.
-    # O build mostrado é somente o loadout confirmado pela fonte escolhida.
-    parts = [f"⚡ {display_name(name)}"]
+    # A API não faz mais nenhuma marcação de usuário.
+    # O StreamElements fica responsável por $(user).
+    parts = [f"⚡ {name}"]
 
     if typ == "buff" and changes:
         parts.append("📈 Buff: " + _changes(changes, "+"))
     elif typ == "nerf" and changes:
         parts.append("📉 Nerf: " + _changes(changes, "↓"))
 
-    # Preserva os 5 acessórios válidos do build; nunca completa com outro
-    # loadout e nunca troca um acessório por ser considerado "melhor".
     parts.extend(_parts(atts))
-
-    # O limite continua existindo para o chat, mas tentamos preservar todos
-    # os 5 acessórios antes de reduzir qualquer texto.
     return _fit_bytes(parts)
+
