@@ -17,7 +17,9 @@ _SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="live-so
 
 
 class LiveResolver:
-    """Resolve loadouts atuais sem deixar uma fonte externa travar o /classe."""
+    """Resolve loadouts atuais sem travar o /classe e sem inventar builds."""
+
+    MAX_ATTACHMENTS = 5
 
     def __init__(self, cache_minutes=10, source_timeout=4.5, stale_minutes=30):
         self.cache = {}
@@ -47,8 +49,7 @@ class LiveResolver:
         if not a_items or not b_items:
             return 0.0
 
-        a = {}
-        b = {}
+        a, b = {}, {}
         for item in a_items:
             slot, name = cls._attachment_key(item)
             if slot and name:
@@ -58,19 +59,16 @@ class LiveResolver:
             if slot and name:
                 b[slot] = name
 
-        if not a or not b:
+        common_slots = set(a) & set(b)
+        if not common_slots:
             return 0.0
 
         core = {
             "lente", "boca", "cano", "acoplamento",
             "carregador", "coronha", "cabo", "municao"
         }
-        common_slots = set(a) & set(b)
-        if not common_slots:
-            return 0.0
+        weighted_total = weighted_match = 0.0
 
-        weighted_total = 0.0
-        weighted_match = 0.0
         for slot in common_slots:
             left, right = a[slot], b[slot]
             if left == right:
@@ -80,20 +78,23 @@ class LiveResolver:
                 lt, rt = set(left.split()), set(right.split())
                 if lt and rt:
                     score = max(score, len(lt & rt) / len(lt | rt))
+
             weight = 2.0 if slot in core else 1.0
             weighted_total += weight
             weighted_match += weight * score
 
-        core_union = (set(a) | set(b)) & core
-        core_overlap = common_slots & core
-        coverage = len(core_overlap) / len(core_union) if core_union else 0.0
+        union = (set(a) | set(b)) & core
+        overlap = common_slots & core
+        coverage = len(overlap) / len(union) if union else 0.0
         base = weighted_match / weighted_total if weighted_total else 0.0
         return round(base * (0.70 + 0.30 * coverage), 4)
 
     @classmethod
     def _normalize_loadout(cls, data):
+        """Normaliza um build e nunca permite mais de 5 acessórios."""
         if not data:
             return {}
+
         chosen = dict(data)
         attachments = []
         seen = set()
@@ -101,6 +102,7 @@ class LiveResolver:
         for item in data.get("attachments") or []:
             if not isinstance(item, dict):
                 continue
+
             slot = str(item.get("slot") or "").strip()
             name = str(item.get("name") or "").strip()
             if not slot or not name:
@@ -109,14 +111,27 @@ class LiveResolver:
             key = (cls._norm_text(slot), cls._norm_text(name))
             if key in seen:
                 continue
+
             seen.add(key)
             attachments.append({"slot": slot, "name": name})
 
+            if len(attachments) >= cls.MAX_ATTACHMENTS:
+                break
+
         chosen["attachments"] = attachments
+        chosen["attachments_count"] = len(attachments)
+        chosen["max_attachments"] = cls.MAX_ATTACHMENTS
         return chosen
 
     @classmethod
     def _choose_loadout(cls, cm, wz, zh):
+        """Escolhe um único build real. Nunca combina acessórios de fontes diferentes."""
+        priority = {
+            "CODMunity": 3,
+            "WarzoneLoadout.games": 2,
+            "WZHUB": 1,
+        }
+
         valid = [
             ("CODMunity", cls._normalize_loadout(cm)),
             ("WarzoneLoadout.games", cls._normalize_loadout(wz)),
@@ -127,6 +142,7 @@ class LiveResolver:
         if not valid:
             return {}, "nenhuma", 0.0
 
+        # Primeiro tenta encontrar duas fontes que realmente concordem.
         best = None
         for i, (na, a) in enumerate(valid):
             for nb, b in valid[i + 1:]:
@@ -138,75 +154,91 @@ class LiveResolver:
 
         if best:
             sim, na, a, nb, b = best
-            priority = {
-                "CODMunity": 3,
-                "WarzoneLoadout.games": 2,
-                "WZHUB": 1,
-            }
 
-            if (len(b["attachments"]), priority.get(nb, 0)) > (
-                len(a["attachments"]), priority.get(na, 0)
-            ):
-                chosen = dict(b)
-            else:
-                chosen = dict(a)
-
+            # Usa um único loadout completo. Não mistura acessórios.
+            candidates = [(na, a), (nb, b)]
+            chosen_name, chosen = max(
+                candidates,
+                key=lambda item: (
+                    len(item[1].get("attachments") or []),
+                    priority.get(item[0], 0),
+                ),
+            )
+            chosen = dict(chosen)
             chosen["confirmation"] = f"{na} + {nb}"
             chosen["consensus_sources"] = [na, nb]
             chosen["consensus_details"] = {
                 "score": round(sim, 3),
-                "common_slots": len(
-                    set(x.get("slot") for x in a["attachments"])
-                    & set(x.get("slot") for x in b["attachments"])
-                ),
                 "source_slots": {
                     na: len(a["attachments"]),
                     nb: len(b["attachments"]),
                 },
+                "selected_source": chosen_name,
+                "rule": "um único loadout, máximo 5 acessórios",
             }
             return chosen, chosen["confirmation"], sim
 
-        na, a = valid[0]
-        chosen = dict(a)
-        chosen["confirmation"] = na
-        chosen["consensus_sources"] = [na]
-        return chosen, na, 0.0
+        # Sem consenso: escolhe a fonte com build mais completo; em empate,
+        # respeita a prioridade das fontes. Não cria um build híbrido.
+        name, chosen = max(
+            valid,
+            key=lambda item: (
+                len(item[1].get("attachments") or []),
+                priority.get(item[0], 0),
+            ),
+        )
+        chosen = dict(chosen)
+        chosen["confirmation"] = name
+        chosen["consensus_sources"] = [name]
+        chosen["consensus_details"] = {
+            "score": 0.0,
+            "selected_source": name,
+            "rule": "sem consenso; loadout de uma única fonte",
+        }
+        return chosen, name, 0.0
 
-    @staticmethod
-    def _meta(cm, wz, zh):
-        values = [
-            cm.get("meta_status"),
-            wz.get("meta_status"),
-            zh.get("meta_status"),
+    @classmethod
+    def _meta(cls, cm, wz, zh):
+        """META somente quando uma fonte marca explicitamente a arma como Meta."""
+        sources = [
+            ("CODMunity", cm.get("meta_status")),
+            ("WarzoneLoadout.games", wz.get("meta_status")),
+            ("WZHUB", zh.get("meta_status")),
         ]
-        values = [x for x in values if x]
 
-        if not values:
-            return None, "nao_confirmado"
+        explicit = []
+        for source, value in sources:
+            if not value:
+                continue
+            normalized = cls._norm_text(value)
+            if normalized in {"meta", "absolute meta", "meta absoluta"}:
+                explicit.append(source)
 
-        normalized = [norm(x) for x in values]
+        if explicit:
+            confidence = "alta" if len(explicit) >= 2 else "boa"
+            return "Meta", confidence, explicit
 
-        if any("absolute" in x for x in normalized):
-            return "Absolute Meta", "alta"
+        # "Contender", "Very Good", "A/B/C Tier" etc. não viram META.
+        observed = [str(value) for _, value in sources if value]
+        if observed:
+            return observed[0], "nao_confirmado", []
 
-        if any(x == "meta" or x.endswith(" meta") for x in normalized):
-            return "Meta", "alta" if len(values) >= 2 else "boa"
-
-        return values[0], "boa" if len(values) >= 2 else "provavel"
+        return None, "nao_confirmado", []
 
     @staticmethod
     def _loadout_confidence(chosen, confirmation, consensus):
-        if not chosen.get("attachments"):
+        count = len(chosen.get("attachments") or [])
+        if count == 0:
             return "nenhuma"
         if consensus >= 0.85:
             return "alta"
         if consensus >= 0.70:
             return "boa"
-        if confirmation == "CODMunity":
+        if count >= 5 and confirmation == "CODMunity":
             return "boa"
-        if confirmation == "WarzoneLoadout.games":
-            return "provavel"
-        return "baixa"
+        if count >= 5 and confirmation == "WarzoneLoadout.games":
+            return "boa"
+        return "provavel"
 
     @staticmethod
     def _safe_call(fn):
@@ -223,7 +255,6 @@ class LiveResolver:
             "warzoneloadout": _SOURCE_EXECUTOR.submit(
                 self._safe_call, lambda: wlg(name, game)
             ),
-            # WZHUB recebe apenas o nome na implementação atual.
             "wzhub": _SOURCE_EXECUTOR.submit(
                 self._safe_call, lambda: wzhub(name)
             ),
@@ -270,7 +301,7 @@ class LiveResolver:
         loadout_confidence = self._loadout_confidence(
             chosen, confirmation, consensus
         )
-        meta_status, meta_confidence = self._meta(cm, wz, zh)
+        meta_status, meta_confidence, meta_sources = self._meta(cm, wz, zh)
 
         data = {
             "loadout": chosen,
@@ -279,6 +310,7 @@ class LiveResolver:
             "loadout_consensus": round(consensus, 3),
             "meta_status": meta_status,
             "meta_confidence": meta_confidence,
+            "meta_sources": meta_sources,
             "pick_rate": cm.get("pick_rate"),
             "patch": patch,
             "codmunity": cm,
@@ -287,7 +319,6 @@ class LiveResolver:
             "refreshed": now.isoformat(timespec="seconds"),
         }
 
-        # Se a atualização live falhar, preserva o último resultado bom.
         has_loadout = bool(chosen.get("attachments"))
         if not has_loadout and cached:
             stale_until = cached.get("stale_until")

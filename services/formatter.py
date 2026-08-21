@@ -5,6 +5,7 @@ PREFIX = {
     "nerf": ["📉", "🎮", "⚡", "💀"],
     "confirmed_loadout": ["🎯", "🔎", "⚡"],
     "meta": ["🔥", "🎯", "⚡"],
+    "boa": ["🎯", "⚡", "👍"],
 }
 
 ORDER = {
@@ -14,8 +15,8 @@ ORDER = {
     "Kit de conversão": 12,
 }
 
-# O customapi do StreamElements limita a resposta a 400 bytes.
 MAX_BYTES = 380
+MAX_ATTACHMENTS = 5
 
 
 def _changes(changes, arrow=None):
@@ -33,27 +34,27 @@ def _changes(changes, arrow=None):
 
 
 def _parts(atts):
-    rows = sorted(atts, key=lambda x: ORDER.get(x.get("slot"), 99))
+    rows = sorted(
+        (x for x in (atts or []) if x.get("slot") and x.get("name")),
+        key=lambda x: ORDER.get(x.get("slot"), 99),
+    )
+    # Regra do Warzone: nunca enviar mais de 5 acessórios.
     return [
         f"{x.get('slot')}: {x.get('name')}"
-        for x in rows
-        if x.get("slot") and x.get("name")
+        for x in rows[:MAX_ATTACHMENTS]
     ]
 
 
 def _fit_bytes(parts, limit=MAX_BYTES):
-    """Monta a resposta sem ultrapassar o limite do StreamElements."""
     if not parts:
         return ""
 
     result = parts[0]
-
     for part in parts[1:]:
         candidate = result + " | " + part
         if len(candidate.encode("utf-8")) > limit:
             break
         result = candidate
-
     return result
 
 
@@ -62,7 +63,7 @@ def format_class_response(r, username="@Gabriel"):
     name = w.get("name", "Arma")
     changes = (r.get("patch") or {}).get("changes") or []
     typ = r.get("status")
-    atts = r.get("attachments") or []
+    atts = (r.get("attachments") or [])[:MAX_ATTACHMENTS]
 
     if not atts and typ == "buff":
         return _fit_bytes([
@@ -82,11 +83,12 @@ def format_class_response(r, username="@Gabriel"):
     if not atts:
         return f"🔎 {username} {name} | Loadout ainda não confirmado."
 
-    title = f"META atual da {name}" if r.get("meta") else f"Classe atual da {name}"
-    prefix = random.choice(
-        PREFIX["meta"] if r.get("meta") else PREFIX["confirmed_loadout"]
-    )
+    # META somente quando o motor confirmou explicitamente.
+    is_meta = bool(r.get("meta"))
+    label = "META" if is_meta else "BOA"
+    title = f"{label} atual da {name}"
 
+    prefix = random.choice(PREFIX["meta"] if is_meta else PREFIX["boa"])
     parts = [f"{prefix} {username} {title}"]
 
     if typ == "buff" and changes:
