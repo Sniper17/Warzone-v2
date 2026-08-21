@@ -1,15 +1,57 @@
+
+from __future__ import annotations
+from .live import LiveResolver
+
+META_LABELS = {"meta", "absolute meta", "meta absoluta"}
+
 class MetaEngine:
-    """Activision = authoritative patch facts; WZHUB = primary public loadout; others confirm."""
-    def __init__(self, catalog): self.catalog = catalog
-    def resolve(self, weapon):
-        w = dict(weapon); patch = w.get('recent_change') or {}; attachments = w.get('attachments') or []
-        meta = str(w.get('tier','')).upper() in {'META','META ABSOLUTA','ABSOLUTE META'} or bool(w.get('is_meta'))
-        return {'weapon':w,'status':patch.get('type') if patch.get('type') in {'buff','nerf'} else ('confirmed_loadout' if attachments else 'unconfirmed_loadout'),'meta':meta,'attachments':attachments,'patch':patch,'loadout_source':w.get('loadout_source') or 'WZHUB','confidence':w.get('confidence')}
+    def __init__(self, catalog):
+        self.catalog = catalog
+        self.live = LiveResolver()
+
+    def resolve(self, weapon, live=True):
+        w = dict(weapon)
+        live_data = self.live.resolve(w) if live else {}
+        cm = live_data.get("codmunity") or {}
+        wz = live_data.get("warzoneloadout") or {}
+        act = live_data.get("patch") or {}
+        loadout = live_data.get("loadout") or {}
+
+        # Live sources override stale JSON, but never erase a good stored class.
+        meta_status = cm.get("meta_status") or w.get("meta_status") or w.get("tier")
+        pick_rate = cm.get("pick_rate")
+        if pick_rate is None: pick_rate = w.get("pick_rate")
+        attachments = loadout.get("attachments") or w.get("attachments") or []
+        code = loadout.get("code") or w.get("code") or ""
+        patch = act if act.get("ok") else (w.get("recent_change") or {})
+        typ = patch.get("type")
+        meta = str(meta_status or "").lower() in META_LABELS or bool(w.get("is_meta"))
+
+        confidence = loadout.get("confidence") or w.get("confidence")
+        if attachments and not confidence:
+            confidence = "boa" if len(attachments) >= 4 else "baixa"
+
+        return {
+            "weapon": w,
+            "meta": meta,
+            "meta_status": meta_status,
+            "pick_rate": pick_rate,
+            "attachments": attachments,
+            "code": code,
+            "loadout_source": loadout.get("source") or w.get("loadout_source"),
+            "confidence": confidence,
+            "patch": patch,
+            "status": typ if typ in {"buff","nerf","mixed"} else ("confirmed_loadout" if attachments else "unconfirmed_loadout"),
+        }
+
     def general_meta(self):
-        c=self.catalog.data.get('categories',{}); ar=(c.get('ar') or [''])[0]; smg=(c.get('smg') or [''])[0]
-        return f'🔥 META WARZONE: 🔫 {ar} (AR) • ⚡ {smg} (SMG)'
+        rows = self.catalog.current_meta()
+        if not rows:
+            return "⚠️ A META ainda está sendo sincronizada. Tente novamente em alguns minutos."
+        return "🔥 META WARZONE: " + " • ".join(w["name"] for w in rows[:3])
+
     def category_meta(self, cat):
-        names=(self.catalog.data.get('categories',{}).get(cat) or [])[:3]
-        if not names: return '⚠️ Nenhuma arma META confirmada nessa categoria.'
-        labels={'ar':'🔥 META AR','smg':'⚡ META SMG','sniper':'🎯 META SNIPER','doze':'💥 META DOZE','pt':'🔫 META PISTOLAS'}
-        return labels.get(cat,'🔥 META')+': '+' • '.join(names)
+        rows = self.catalog.current_meta(cat)
+        if not rows:
+            return "⚠️ Ainda não encontrei META confirmada nessa categoria."
+        return "🔥 META " + cat.upper() + ": " + " • ".join(w["name"] for w in rows[:3])
