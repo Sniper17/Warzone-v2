@@ -59,43 +59,41 @@ def _fit_bytes(parts, limit=MAX_BYTES):
 
 
 def format_class_response(r, username="@Gabriel"):
+    """Resposta do !classe: apenas o loadout confirmado + buff/nerf."""
     w = r["weapon"]
     name = w.get("name", "Arma")
     changes = (r.get("patch") or {}).get("changes") or []
     typ = r.get("status")
     atts = (r.get("attachments") or [])[:MAX_ATTACHMENTS]
 
-    if not atts and typ == "buff":
-        return _fit_bytes([
-            f"{random.choice(PREFIX['buff'])} {username} {name} em análise",
-            f"📈 Buff: {_changes(changes, '+') or 'mudanças de balanceamento'}",
-            "Loadout ainda não confirmado",
-        ])
-
-    if not atts and typ == "nerf":
-        return _fit_bytes([
-            f"{random.choice(PREFIX['nerf'])} {username} {name}",
-            "📉 Nerf",
-            _changes(changes, "↓") or "Alterações de balanceamento",
-            "Loadout ainda não confirmado",
-        ])
-
     if not atts:
+        if typ == "buff" and changes:
+            return _fit_bytes([
+                f"⚡ {username} {name}",
+                "📈 Buff: " + _changes(changes, "+"),
+                "Loadout ainda não confirmado",
+            ])
+        if typ == "nerf" and changes:
+            return _fit_bytes([
+                f"⚡ {username} {name}",
+                "📉 Nerf: " + _changes(changes, "↓"),
+                "Loadout ainda não confirmado",
+            ])
         return f"🔎 {username} {name} | Loadout ainda não confirmado."
 
-    # META somente quando o motor confirmou explicitamente.
-    is_meta = bool(r.get("meta"))
-    label = "META" if is_meta else "BOA"
-    title = f"{label} atual da {name}"
-
-    prefix = random.choice(PREFIX["meta"] if is_meta else PREFIX["boa"])
-    parts = [f"{prefix} {username} {title}"]
+    # Não exibimos mais META/BOA/RUIM no !classe.
+    # O build mostrado é somente o loadout confirmado pela fonte escolhida.
+    parts = [f"⚡ {username} {name}"]
 
     if typ == "buff" and changes:
         parts.append("📈 Buff: " + _changes(changes, "+"))
-
-    if typ == "nerf" and changes:
+    elif typ == "nerf" and changes:
         parts.append("📉 Nerf: " + _changes(changes, "↓"))
 
+    # Preserva os 5 acessórios válidos do build; nunca completa com outro
+    # loadout e nunca troca um acessório por ser considerado "melhor".
     parts.extend(_parts(atts))
+
+    # O limite continua existindo para o chat, mas tentamos preservar todos
+    # os 5 acessórios antes de reduzir qualquer texto.
     return _fit_bytes(parts)
