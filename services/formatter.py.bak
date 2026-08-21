@@ -15,7 +15,7 @@ ORDER = {
     "Kit de conversão": 12,
 }
 
-MAX_BYTES = 500
+MAX_BYTES = 380
 MAX_ATTACHMENTS = 5
 
 
@@ -58,23 +58,7 @@ def _fit_bytes(parts, limit=MAX_BYTES):
     return result
 
 
-def format_class_response(r, username=""):
-    # O nome é opcional. Quando o StreamElements já marca o usuário
-    # externamente, não duplicamos a menção dentro da API.
-    username = str(username or "").strip()
-    if username and not username.startswith("@"):
-        username = "@" + username
-
-    def display_name(weapon_name):
-        if not username:
-            return weapon_name
-        # Proteção contra a configuração antiga em que $(user) podia
-        # receber o argumento da arma (ex.: "carbon").
-        u = username[1:].lower().replace("_", "")
-        w = str(weapon_name).lower().replace(" ", "").replace("-", "")
-        if u and (u == w or w.startswith(u)):
-            return weapon_name
-        return f"{username} {weapon_name}"
+def format_class_response(r, username="@Gabriel"):
     """Resposta do !classe: apenas o loadout confirmado + buff/nerf."""
     w = r["weapon"]
     name = w.get("name", "Arma")
@@ -85,21 +69,21 @@ def format_class_response(r, username=""):
     if not atts:
         if typ == "buff" and changes:
             return _fit_bytes([
-                f"⚡ {display_name(name)}",
+                f"⚡ {username} {name}",
                 "📈 Buff: " + _changes(changes, "+"),
                 "Loadout ainda não confirmado",
             ])
         if typ == "nerf" and changes:
             return _fit_bytes([
-                f"⚡ {display_name(name)}",
+                f"⚡ {username} {name}",
                 "📉 Nerf: " + _changes(changes, "↓"),
                 "Loadout ainda não confirmado",
             ])
-        return f"🔎 {display_name(name)} | Loadout ainda não confirmado."
+        return f"🔎 {username} {name} | Loadout ainda não confirmado."
 
     # Não exibimos mais META/BOA/RUIM no !classe.
     # O build mostrado é somente o loadout confirmado pela fonte escolhida.
-    parts = [f"⚡ {display_name(name)}"]
+    parts = [f"⚡ {username} {name}"]
 
     if typ == "buff" and changes:
         parts.append("📈 Buff: " + _changes(changes, "+"))

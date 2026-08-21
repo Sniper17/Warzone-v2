@@ -105,63 +105,71 @@ def _attachments_structured(text):
 def _attachments_from_faq(faq):
     """Converte o texto humano do FAQ em acessórios estruturados.
 
-    Exemplo real:
-    Redwell 30-S 2x Lente, Monolithic Suppressor Boca,
-    15" Benthic Barrel Cano, VAS Convergence Foregrip Acoplamento,
-    Rexford Extended II Carregador
+    Aceita tanto "item Slot" quanto pequenas variações de pontuação/HTML.
+    A busca é feita por todos os slots conhecidos para não perder, por exemplo,
+    o Acoplamento no meio da frase.
     """
     if not faq:
         return []
 
-    # Normaliza separadores sem destruir nomes que tenham pontuação.
-    raw = re.sub(r"\s+", " ", faq).strip()
+    raw = re.sub(r"\s+", " ", clean_text(faq)).strip(" ,;")
+    if not raw:
+        return []
+
+    slot_labels = (
+        "Lente", "Boca", "Cano", "Acoplamento", "Carregador",
+        "Coronha", "Cabo", "Mods de disparo", "Laser", "Pente", "Munição"
+    )
+    label_pattern = "|".join(re.escape(x) for x in slot_labels)
+
+    # Primeiro: itens separados por vírgula/ponto e vírgula.
     pieces = [clean_text(x) for x in re.split(r"\s*[,;]\s*", raw) if clean_text(x)]
     found = []
 
     for piece in pieces:
-        # O rótulo de slot aparece no final de cada item.
-        m = re.search(
-            r"\s+(Lente|Boca|Cano|Acoplamento|Carregador|Coronha|Cabo|"
-            r"Mods de disparo|Laser|Pente|Munição)\s*$",
-            piece,
-            re.I,
-        )
+        m = re.search(rf"\s+({label_pattern})\s*$", piece, re.I)
+        if not m:
+            # Alguns textos podem colocar pontuação imediatamente antes do slot.
+            m = re.search(rf"(?:^|[ ,])({label_pattern})[.!:]?\s*$", piece, re.I)
         if not m:
             continue
+
         slot = _slot_from_label(m.group(1))
         value = _clean_attachment_name(piece[:m.start()])
-        if slot and 2 <= len(value) <= 100:
-            if not any(x["slot"] == slot for x in found):
+        if slot and 2 <= len(value) <= 120:
+            key = (norm(slot), norm(value))
+            if not any((norm(x["slot"]), norm(x["name"])) == key for x in found):
                 found.append({"slot": slot, "name": value})
 
-    # Fallback para FAQ sem vírgulas: procura cada slot e usa o trecho anterior.
+    # Fallback robusto: percorre a frase inteira e captura cada trecho
+    # imediatamente anterior ao rótulo do slot. Isso recupera slots mesmo
+    # quando o separador usado pelo site muda.
     if len(found) < 4:
-        labels = r"Lente|Boca|Cano|Acoplamento|Carregador|Coronha|Cabo|Mods de disparo|Laser|Pente|Munição"
-        matches = list(re.finditer(rf"(.+?)\s+({labels})(?=\s*(?:,|$))", raw, re.I))
+        matches = list(re.finditer(rf"(?P<item>.+?)\s+(?P<slot>{label_pattern})(?=\s*(?:,|;|$))", raw, re.I))
         for m in matches:
-            slot = _slot_from_label(m.group(2))
-            value = _clean_attachment_name(m.group(1))
-            if slot and 2 <= len(value) <= 100 and not any(x["slot"] == slot for x in found):
+            slot = _slot_from_label(m.group("slot"))
+            value = _clean_attachment_name(m.group("item"))
+            if not slot or not (2 <= len(value) <= 120):
+                continue
+            key = (norm(slot), norm(value))
+            if not any((norm(x["slot"]), norm(x["name"])) == key for x in found):
                 found.append({"slot": slot, "name": value})
 
-    return found[:8]
-
+    return found[:10]
 
 def _attachments(text, faq=None):
     structured = _attachments_structured(text)
     faq_items = _attachments_from_faq(faq)
 
-    # Os dois formatos vêm da MESMA fonte (CODMunity). Escolhemos o formato
-    # que recuperou mais acessórios, sem misturar builds. Isso evita perder
-    # um slot válido quando o FAQ omite um rótulo que existe na página.
-    candidates = [
-        (len(faq_items), faq_items, "faq"),
-        (len(structured), structured, "structured"),
-    ]
-    count, items, source = max(candidates, key=lambda x: x[0])
-    if count:
-        return items, source
-    return [], "none"
+    # O FAQ é a fonte preferida quando contém 4+ acessórios, pois é a classe
+    # recomendada pela própria página e evita capturar labels da interface.
+    if len(faq_items) >= 4:
+        return faq_items, "faq"
+    if len(structured) >= 4:
+        return structured, "structured"
+    if faq_items:
+        return faq_items, "faq"
+    return structured, "structured"
 
 
 def _faq_loadout(text, weapon_name):

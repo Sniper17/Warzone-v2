@@ -1,4 +1,3 @@
-
 from flask import Flask, request
 from pathlib import Path
 import os
@@ -41,7 +40,7 @@ def bo7():
 @app.get("/classe")
 def classe():
     q = request.args.get("arma", "").strip()
-    user = request.args.get("user", "@Gabriel").strip() or "@Gabriel"
+    user = request.args.get("user", "").strip()
     if not q:
         return "⚠️ Informe a arma. Exemplo: !classe an94"
     matches = catalog.search(q)
@@ -65,11 +64,10 @@ def meta():
         return "🤔 Qual arma você deseja? " + ", ".join(x["name"] for x in matches[:6])
     if not matches:
         return f"🔎 Não encontrei uma arma chamada {q}."
-    return format_class_response(engine.resolve(matches[0]), request.args.get("user","@Gabriel"))
+    return format_class_response(engine.resolve(matches[0]), request.args.get("user", ""))
 
 @app.get("/reload")
 def reload_data():
-    # Manual local refresh for a deployment; no mutation of the database is performed.
     catalog.reload()
     return {"ok": True, "weapons": len(catalog.weapons), "message": "Dados recarregados."}
 
